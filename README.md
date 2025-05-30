@@ -1,117 +1,99 @@
-# 极简验证码识别系统
+# 极简验证码识别工具
 
-一个轻量级的验证码识别系统，包含服务器端和油猴脚本客户端，可自动识别网页中的图形验证码和滑块验证码。
+一个简单易用的验证码识别工具，支持图形验证码、滑块验证码和图标点选验证码。
 
 ## 功能特点
 
-- 自动识别常见图形验证码
-- 自动识别滑块验证码
-- 一键式部署、启动和停止
-- 跨平台支持(Windows/Linux/Mac)
+- 支持常见图形验证码自动识别
+- 支持滑块验证码自动拖动（包括拼图滑块）
+- 支持图标点选验证码自动点击
+- 轻量级设计，无需复杂配置
+- 支持自定义OCR服务器地址
+- 自动检测验证码和输入框
+- 高准确率识别
 
-## 系统组成
+## 安装说明
 
-- **服务端**: Python OCR服务 (simple_ocr_server.py)
-- **客户端**: 油猴脚本 (captcha_solver_lite.user.js)
-- **部署脚本**: 一键部署脚本 (auto_setup.sh / auto_setup.cmd)
+### 1. 安装油猴插件
 
-## 快速开始
+首先需要在浏览器中安装Tampermonkey（油猴）插件：
 
-### 1. 克隆仓库
+- [Chrome插件商店](https://chrome.google.com/webstore/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo)
+- [Firefox插件商店](https://addons.mozilla.org/en-US/firefox/addon/tampermonkey/)
+- [Edge插件商店](https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd)
+
+### 2. 安装脚本
+
+点击下面的链接安装脚本：
+
+[安装极简验证码识别工具](https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js)
+
+### 3. 启动OCR服务器
+
+#### Windows系统
+
+双击运行 `start_ocr_server.cmd` 文件
+
+#### Linux/Mac系统
 
 ```bash
-git clone https://github.com/laozig/captcha_.git
-cd captcha_
+chmod +x start_ocr_server.sh
+./start_ocr_server.sh
 ```
 
-### 2. 一键部署和启动服务
+## 使用方法
 
-**Linux/Mac系统**:
-```bash
-# 添加执行权限
-chmod +x auto_setup.sh
+1. 启动OCR服务器
+2. 打开需要识别验证码的网页
+3. 脚本会自动检测并识别验证码
 
-# 启动服务
-./auto_setup.sh
+## 支持的验证码类型
+
+### 图形验证码
+
+自动识别常见的字符图形验证码，并填入对应的输入框。
+
+### 滑块验证码
+
+自动识别滑块验证码，计算滑动距离并模拟人工拖动完成验证。支持以下类型：
+- 常规滑块验证码
+- 拼图滑块验证码（需要将拼图块拖入对应缺口）
+
+### 图标点选验证码
+
+自动识别图标点选类验证码，分析图片中的目标位置并模拟点击。支持以下类型：
+- 选择指定类型图标的验证码（如"请点击所有的汽车"）
+- 顺序点击的验证码（如"请依次点击1,2,3,4"）
+- 文字点选验证码（如"请点击下图中的'验证'字"）
+
+## 配置选项
+
+在脚本中可以修改以下配置：
+
+```javascript
+// 配置
+const config = {
+    autoMode: true,  // 自动识别验证码
+    checkInterval: 1500,  // 自动检查间隔(毫秒)
+    debug: true,  // 是否显示调试信息
+    delay: 500,  // 点击验证码后的识别延迟(毫秒)
+    sliderEnabled: true,  // 是否启用滑块验证码支持
+    iconEnabled: true,  // 是否启用图标点选验证码支持
+    // 更多配置...
+};
 ```
 
-**Windows系统**:
-- 双击运行 `auto_setup.cmd` 脚本
-
-### 3. 安装客户端脚本
-
-#### 方法一：直接安装URL（推荐）
-
-1. 在浏览器中安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展
-2. 点击下面的链接直接安装脚本：
-
-   [**点击此处安装验证码识别脚本**](https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js)
-
-#### 方法二：手动安装
-
-1. 在浏览器中安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展
-2. 点击Tampermonkey图标 → 创建新脚本
-3. 复制 captcha_solver_lite.user.js 的内容并粘贴
-4. 保存脚本
-
-#### 配置服务器地址
-
-安装脚本后，需要修改脚本中的服务器地址：
-
-1. 点击Tampermonkey图标 → 管理面板
-2. 找到"极简验证码识别工具"脚本并点击编辑
-3. 修改以下两行为您的服务器IP地址：
-   ```javascript
-   // OCR服务器地址 - 修改为您的服务器IP地址
-   const OCR_SERVER = 'http://您的服务器IP:9898/ocr';
-   const SLIDE_SERVER = 'http://您的服务器IP:9898/slide';
-   ```
-4. 保存脚本 (Ctrl+S)
-
-### 4. 停止服务
-
-**Linux/Mac系统**:
-```bash
-./auto_setup.sh stop
-```
-
-**Windows系统**:
-```
-auto_setup.cmd stop
-```
-
-## 常见问题
-
-### OpenCV依赖问题
-
-如果遇到以下错误:
-```
-ImportError: libGL.so.1: cannot open shared object file: No such file or directory
-```
-
-一键部署脚本会自动解决此问题，它会:
-1. 安装必要的系统依赖
-2. 使用无头版本的OpenCV (opencv-python-headless)
-
-如果仍有问题，可以手动安装系统依赖:
-```bash
-apt-get install -y libgl1-mesa-glx libglib2.0-0 libsm6 libxrender1 libxext6
-```
-
-### 脚本更新
-
-油猴脚本配置了自动更新URL，当GitHub仓库中的脚本更新时，油猴会自动检测并提示更新。
-
-## API接口
+## OCR服务器API
 
 ### 图形验证码识别
 
 ```
 POST /ocr
 Content-Type: application/json
-{"image": "base64编码的图片"}
 
-返回: {"code": 0, "data": "识别结果"}
+{
+    "image": "base64编码的图片数据"
+}
 ```
 
 ### 滑块验证码识别
@@ -119,11 +101,42 @@ Content-Type: application/json
 ```
 POST /slide
 Content-Type: application/json
-{"bg_image": "背景图base64", "slide_image": "滑块图base64"}
 
-返回: {"code": 0, "data": {"x": 150, "y": 0}}
+{
+    "bg_image": "base64编码的背景图片",
+    "slide_image": "base64编码的滑块图片"
+}
 ```
+
+### 图标点选验证码识别
+
+```
+POST /icon
+Content-Type: application/json
+
+{
+    "image": "base64编码的图片数据",
+    "prompt": "提示文本，如'请点击所有的汽车'"
+}
+```
+
+## 常见问题
+
+**Q: 验证码识别失败怎么办？**  
+A: 请确保OCR服务器正常运行，并检查浏览器控制台是否有错误信息。
+
+**Q: 如何修改OCR服务器地址？**  
+A: 在脚本中修改 `OCR_SERVER` 变量的值。
+
+**Q: 支持哪些浏览器？**  
+A: 支持安装了Tampermonkey的Chrome、Firefox、Edge等主流浏览器。
+
+## 注意事项
+
+- 本工具仅供学习交流使用，请勿用于非法用途
+- 部分网站可能有反爬虫机制，可能导致识别失败
+- 请确保OCR服务器在使用前已正确启动
 
 ## 许可证
 
-MIT
+MIT License

@@ -5,6 +5,7 @@
 // @description  极简版验证码识别工具，支持图形验证码和滑块验证码
 // @author       laozig
 // @match        *://*/*
+// @match        file:///*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
 // @connect      *
@@ -17,9 +18,10 @@
 (function() {
     'use strict';
     
-    // OCR服务器地址 - 已修改为您的服务器IP地址
-    const OCR_SERVER = 'http://captcha.tangyun.lat:9898/ocr';
-    const SLIDE_SERVER = 'http://captcha.tangyun.lat:9898/slide';
+    // OCR服务器地址 - 修改为本地地址
+    const OCR_SERVER = 'http://localhost:9898/ocr';
+    const SLIDE_SERVER = 'http://localhost:9898/slide';
+    const ICON_SERVER = 'http://localhost:9898/icon'; // 新增图标点选API地址
     
     // 配置
     const config = {
@@ -38,7 +40,12 @@
         sliderAccuracy: 5,  // 滑块拖动精度，像素误差范围
         initialSliderCheckDelay: 2000,  // 初始滑块检查延迟(毫秒)
         forceSliderCheck: true,  // 强制定期检查滑块验证码
-        useSlideAPI: true  // 是否使用服务器API进行滑块分析
+        useSlideAPI: true,  // 是否使用服务器API进行滑块分析
+        iconEnabled: true,  // 是否启用图标点选验证码支持
+        iconDelay: 500,  // 图标点选验证码延迟(毫秒)
+        iconClickDelay: 300,  // 图标点击之间的延迟(毫秒)
+        initialIconCheckDelay: 2000,  // 初始图标点选验证码检查延迟(毫秒)
+        forceIconCheck: true  // 强制定期检查图标点选验证码
     };
     
     // 存储识别过的验证码和当前处理的验证码
@@ -107,6 +114,13 @@
             }, config.initialSliderCheckDelay);
         }
         
+        // 初始图标点选验证码检查
+        if (config.iconEnabled) {
+            setTimeout(() => {
+                checkForIconCaptcha(true);
+            }, config.initialIconCheckDelay);
+        }
+        
         // 开始定期检查
         setInterval(() => {
             checkForCaptcha();
@@ -119,6 +133,17 @@
                     checkForSliderCaptcha(true);
                 } else {
                     checkForSliderCaptcha();
+                }
+            }, config.checkInterval * 2);
+        }
+        
+        // 定期检查图标点选验证码
+        if (config.iconEnabled) {
+            setInterval(() => {
+                if (config.forceIconCheck) {
+                    checkForIconCaptcha(true);
+                } else {
+                    checkForIconCaptcha();
                 }
             }, config.checkInterval * 2);
         }
@@ -143,6 +168,7 @@
             let shouldCheck = false;
             let popupDetected = false;
             let sliderDetected = false;
+            let iconDetected = false;
             
             for (const mutation of mutations) {
                 // 检查新添加的节点
@@ -164,6 +190,12 @@
                         if (node.nodeType === 1 && config.sliderEnabled && isPossibleSlider(node)) {
                             sliderDetected = true;
                             if (config.debug) console.log('[验证码] 检测到可能的滑块验证码:', node);
+                        }
+                        
+                        // 检查是否添加了图标点选验证码
+                        if (node.nodeType === 1 && config.iconEnabled && isPossibleIconCaptcha(node)) {
+                            iconDetected = true;
+                            if (config.debug) console.log('[验证码] 检测到可能的图标点选验证码:', node);
                         }
                     }
                 }
@@ -191,6 +223,15 @@
                             }
                         }
                         
+                        // 检查是否是图标点选验证码显示
+                        if (config.iconEnabled && isPossibleIconCaptcha(mutation.target)) {
+                            const styles = window.getComputedStyle(mutation.target);
+                            if (styles.display !== 'none' && styles.visibility !== 'hidden') {
+                                iconDetected = true;
+                                if (config.debug) console.log('[验证码] 检测到图标点选验证码显示:', mutation.target);
+                            }
+                        }
+                        
                         // 元素显示状态变化可能意味着验证码出现
                         shouldCheck = true;
                     }
@@ -214,6 +255,13 @@
                 setTimeout(() => {
                     checkForSliderCaptcha();
                 }, config.sliderDelay);
+            }
+            
+            if (iconDetected && config.iconEnabled) {
+                // 检测到图标点选验证码，延迟一点再处理
+                setTimeout(() => {
+                    checkForIconCaptcha();
+                }, config.iconDelay);
             }
         });
         
@@ -1085,9 +1133,15 @@
             return;
         }
         
-        const { slider, track, container } = result;
+        const { slider, track, container, puzzlePiece } = result;
         
-        if (config.debug) console.log('[验证码] 找到滑块验证码:');
+        if (config.debug) {
+            console.log('[验证码] 找到滑块验证码:');
+            console.log('- 滑块:', slider);
+            console.log('- 轨道:', track);
+            console.log('- 容器:', container);
+            if (puzzlePiece) console.log('- 拼图元素:', puzzlePiece);
+        }
         
         // 检查是否已处理过该滑块
         const sliderKey = slider.outerHTML;
@@ -1099,8 +1153,21 @@
         // 记录该滑块已处理
         processedCaptchas.add(sliderKey);
         
+        // 如果有拼图元素，记录其初始位置
+        if (puzzlePiece) {
+            try {
+                const computedStyle = window.getComputedStyle(puzzlePiece);
+                const initialLeft = parseInt(computedStyle.left) || 0;
+                puzzlePiece.setAttribute('data-initial-left', initialLeft.toString());
+                
+                if (config.debug) console.log('[验证码] 记录拼图元素初始位置:', initialLeft);
+            } catch (e) {
+                // 忽略错误
+            }
+        }
+        
         // 计算滑动距离
-        calculateSlideDistance(slider, track, container).then(distance => {
+        calculateSlideDistance(slider, track, container, puzzlePiece).then(distance => {
             if (distance) {
                 if (config.debug) console.log('[验证码] 计算的滑动距离:', distance, 'px');
                 
@@ -1144,13 +1211,16 @@
         
         // 常见滑块验证码选择器
         const sliderSelectors = [
-            // 滑块按钮
+            // 普通滑块按钮
             '.slider-btn', '.sliderBtn', '.slider_button', '.yidun_slider', '.slider', '.handler', '.drag', 
             '.sliderContainer .sliderIcon', '.verify-slider-btn', '.verify-move-block',
             '[class*="slider-btn"]', '[class*="sliderBtn"]', '[class*="handler"]', '[class*="drag-btn"]',
+            '[class*="slider"][class*="btn"]', '[class*="slide"][class*="btn"]', '[class*="drag"][class*="btn"]',
             
-            // 通用选择器
-            '[class*="slider"][class*="btn"]', '[class*="slide"][class*="btn"]', '[class*="drag"][class*="btn"]'
+            // 拼图滑块特有选择器
+            '.slider-button', '.puzzle-slider', '.jigsaw', '.puzzle-piece', '.yidun_jigsaw',
+            '[class*="puzzle"]', '[class*="jigsaw"]', '[class*="piece"]',
+            '.captcha_puzzle', '.captcha_slider', '.captcha-puzzle', '.captcha-slider'
         ];
         
         // 滑块轨道
@@ -1165,7 +1235,8 @@
             '.slider-container', '.sliderContainer', '.yidun_panel', '.captcha-container', '.slider-wrapper',
             '.verify-wrap', '.verify-box', '.verify-container', '.captcha-widget',
             '[class*="slider-container"]', '[class*="sliderContainer"]', '[class*="captcha"]',
-            '[class*="slider"][class*="wrapper"]', '[class*="slide"][class*="container"]'
+            '[class*="slider"][class*="wrapper"]', '[class*="slide"][class*="container"]',
+            '.puzzle-container', '.jigsaw-container', '.captcha-puzzle-container'
         ];
         
         // 首先查找容器
@@ -1184,7 +1255,7 @@
         
         // 如果没找到容器，尝试查找更广泛的元素
         if (!container) {
-            const possibleContainers = document.querySelectorAll('[class*="slider"], [class*="captcha"], [class*="verify"]');
+            const possibleContainers = document.querySelectorAll('[class*="slider"], [class*="captcha"], [class*="verify"], [class*="puzzle"], [class*="jigsaw"]');
             for (const element of possibleContainers) {
                 if (isVisible(element) && isPossibleSlider(element)) {
                     container = element;
@@ -1235,12 +1306,24 @@
         let slider = null;
         for (const selector of sliderSelectors) {
             try {
+                // 首先在容器内查找
                 const element = container.querySelector(selector);
                 if (element && isVisible(element)) {
                     slider = element;
                     if (config.debug) console.log('[验证码] 找到滑块按钮:', selector, element);
                     break;
                 }
+                
+                // 如果没找到，在整个文档中查找
+                const elements = document.querySelectorAll(selector);
+                for (const el of elements) {
+                    if (isVisible(el)) {
+                        slider = el;
+                        if (config.debug) console.log('[验证码] 找到滑块按钮:', selector, el);
+                        break;
+                    }
+                }
+                if (slider) break;
             } catch (e) {
                 // 忽略选择器错误
             }
@@ -1256,13 +1339,14 @@
                 const styles = window.getComputedStyle(element);
                 // 滑块通常是绝对定位或相对定位的小元素
                 if ((styles.position === 'absolute' || styles.position === 'relative') && 
-                    element.offsetWidth < 50 && element.offsetHeight < 50) {
+                    element.offsetWidth < 60 && element.offsetHeight < 60) {
                     
                     // 检查是否有常见的滑块类名特征
                     const className = (element.className || '').toLowerCase();
                     if (className.includes('btn') || className.includes('button') || 
                         className.includes('slider') || className.includes('handler') || 
-                        className.includes('drag')) {
+                        className.includes('drag') || className.includes('puzzle') || 
+                        className.includes('jigsaw') || className.includes('piece')) {
                         slider = element;
                         if (config.debug) console.log('[验证码] 找到可能的滑块按钮:', element);
                         break;
@@ -1285,21 +1369,6 @@
                 if (el.offsetWidth < 60 && el.offsetHeight < 60) {
                     slider = el;
                     if (config.debug) console.log('[验证码] 通过光标样式找到可能的滑块:', el);
-                    break;
-                }
-            }
-        }
-        
-        // 如果仍然没找到滑块，尝试点击交互元素
-        if (!slider && config.debug) {
-            console.log('[验证码] 未能找到滑块按钮，尝试查找其他交互元素');
-            
-            // 查找可能的交互元素
-            const interactiveElements = container.querySelectorAll('div[role="button"], div.slider, div.handler, div.btn');
-            for (const el of interactiveElements) {
-                if (isVisible(el)) {
-                    if (config.debug) console.log('[验证码] 找到可能的交互元素:', el);
-                    slider = el;
                     break;
                 }
             }
@@ -1357,15 +1426,58 @@
             if (config.debug) console.log('[验证码] 未找到明确的轨道，使用容器作为轨道');
         }
         
-        return { slider, track, container };
+        // 查找拼图元素（如果存在）
+        let puzzlePiece = null;
+        const puzzleSelectors = [
+            '.puzzle-piece', '.jigsaw', '.yidun_jigsaw', '.captcha-puzzle', '.puzzle',
+            '[class*="puzzle"]', '[class*="jigsaw"]', '[class*="piece"]'
+        ];
+        
+        for (const selector of puzzleSelectors) {
+            try {
+                const element = container.querySelector(selector);
+                if (element && isVisible(element) && element !== slider) {
+                    puzzlePiece = element;
+                    if (config.debug) console.log('[验证码] 找到拼图元素:', selector, element);
+                    break;
+                }
+            } catch (e) {
+                // 忽略选择器错误
+            }
+        }
+        
+        // 如果没找到拼图元素，尝试查找符合特征的元素
+        if (!puzzlePiece) {
+            const possiblePieces = container.querySelectorAll('div, canvas');
+            for (const element of possiblePieces) {
+                if (!isVisible(element) || element === slider) continue;
+                
+                const styles = window.getComputedStyle(element);
+                // 拼图元素通常是绝对定位的小元素
+                if (styles.position === 'absolute' && 
+                    element.offsetWidth < 60 && element.offsetHeight < 60) {
+                    
+                    // 检查是否有常见的拼图类名特征
+                    const className = (element.className || '').toLowerCase();
+                    if (className.includes('puzzle') || className.includes('jigsaw') || 
+                        className.includes('piece') || className.includes('block')) {
+                        puzzlePiece = element;
+                        if (config.debug) console.log('[验证码] 找到可能的拼图元素:', element);
+                        break;
+                    }
+                }
+            }
+        }
+        
+        return { slider, track, container, puzzlePiece };
     }
     
     // 计算滑动距离
-    async function calculateSlideDistance(slider, track, container) {
+    async function calculateSlideDistance(slider, track, container, puzzlePiece) {
         try {
             // 如果启用了服务器API，先尝试使用服务器分析
             if (config.useSlideAPI) {
-                const apiDistance = await analyzeSlideImagesWithAPI(slider, track, container);
+                const apiDistance = await analyzeSlideImagesWithAPI(slider, track, container, puzzlePiece);
                 if (apiDistance) {
                     if (config.debug) console.log('[验证码] 使用API计算的滑动距离:', apiDistance);
                     return apiDistance;
@@ -1401,12 +1513,13 @@
             }
         } catch (e) {
             console.error('[验证码] 计算滑动距离时出错:', e);
-            return null;
+            // 出错时返回一个默认值
+            return 100;
         }
     }
     
     // 使用服务器API分析滑块图片
-    async function analyzeSlideImagesWithAPI(slider, track, container) {
+    async function analyzeSlideImagesWithAPI(slider, track, container, puzzlePiece) {
         if (config.debug) console.log('[验证码] 尝试使用API分析滑块图片...');
         
         try {
@@ -1478,6 +1591,36 @@
                 }
             }
             
+            // 如果仍然无法获取图片，尝试创建简单的示意图
+            if (!bgBase64 && !puzzleBase64 && !fullBase64) {
+                try {
+                    // 创建背景图的canvas
+                    const bgCanvas = document.createElement('canvas');
+                    bgCanvas.width = container.offsetWidth || 300;
+                    bgCanvas.height = container.offsetHeight || 150;
+                    const bgCtx = bgCanvas.getContext('2d');
+                    bgCtx.fillStyle = '#e0e0e0';
+                    bgCtx.fillRect(0, 0, bgCanvas.width, bgCanvas.height);
+                    
+                    // 创建滑块图的canvas
+                    const puzzleCanvas = document.createElement('canvas');
+                    puzzleCanvas.width = slider.offsetWidth || 40;
+                    puzzleCanvas.height = slider.offsetHeight || 40;
+                    const puzzleCtx = puzzleCanvas.getContext('2d');
+                    puzzleCtx.fillStyle = '#4CAF50';
+                    puzzleCtx.beginPath();
+                    puzzleCtx.arc(puzzleCanvas.width/2, puzzleCanvas.height/2, puzzleCanvas.width/2, 0, Math.PI*2);
+                    puzzleCtx.fill();
+                    
+                    bgBase64 = bgCanvas.toDataURL('image/png').split(',')[1];
+                    puzzleBase64 = puzzleCanvas.toDataURL('image/png').split(',')[1];
+                    
+                    if (config.debug) console.log('[验证码] 创建了简单的示意图');
+                } catch (e) {
+                    console.error('[验证码] 创建示意图失败:', e);
+                }
+            }
+            
             // 发送到服务器分析
             if ((bgBase64 && puzzleBase64) || fullBase64) {
                 if (config.debug) console.log('[验证码] 发送图片到服务器分析');
@@ -1508,26 +1651,36 @@
                                     resolve(result.data.x);
                                 } else {
                                     console.error('[验证码] 服务器分析失败:', result.message || '未知错误');
-                                    resolve(null);
+                                    // 如果服务器分析失败，返回一个估计的距离
+                                    const trackRect = track.getBoundingClientRect();
+                                    const sliderRect = slider.getBoundingClientRect();
+                                    const maxDistance = trackRect.width - sliderRect.width;
+                                    const estimatedDistance = Math.floor(maxDistance * 0.7); // 估计70%距离
+                                    console.log('[验证码] 使用估计的滑动距离:', estimatedDistance);
+                                    resolve(estimatedDistance);
                                 }
                             } catch (e) {
                                 console.error('[验证码] 解析服务器响应时出错:', e);
-                                resolve(null);
+                                // 返回一个默认距离
+                                resolve(100);
                             }
                         },
                         onerror: function(error) {
                             console.error('[验证码] 滑块分析请求失败:', error);
-                            resolve(null);
+                            // 返回一个默认距离
+                            resolve(100);
                         }
                     });
                 });
             } else {
                 if (config.debug) console.log('[验证码] 无法获取有效的图片数据');
-                return null;
+                // 返回一个默认距离
+                return 100;
             }
         } catch (e) {
             console.error('[验证码] API分析滑块图片时出错:', e);
-            return null;
+            // 返回一个默认距离
+            return 100;
         }
     }
     
@@ -1600,10 +1753,27 @@
         if (config.debug) console.log('[验证码] 开始模拟滑块拖动，目标距离:', distance);
         
         try {
+            // 查找相关的拼图元素
+            const result = findSliderCaptcha();
+            const puzzlePiece = result?.puzzlePiece;
+            const track = result?.track;
+            
             // 获取滑块位置
             const rect = slider.getBoundingClientRect();
             const startX = rect.left + rect.width / 2;
             const startY = rect.top + rect.height / 2;
+            
+            // 记录拼图初始位置
+            let puzzleInitialLeft = 0;
+            if (puzzlePiece) {
+                try {
+                    const computedStyle = window.getComputedStyle(puzzlePiece);
+                    puzzleInitialLeft = parseInt(computedStyle.left) || 0;
+                    if (config.debug) console.log('[验证码] 拼图元素初始位置:', puzzleInitialLeft);
+                } catch (e) {
+                    // 忽略错误
+                }
+            }
             
             // 创建鼠标事件
             const createMouseEvent = (type, x, y) => {
@@ -1618,17 +1788,66 @@
                 return event;
             };
             
+            // 创建触摸事件（某些验证码使用触摸事件）
+            const createTouchEvent = (type, x, y) => {
+                const touchObj = new Touch({
+                    identifier: Date.now(),
+                    target: slider,
+                    clientX: x,
+                    clientY: y,
+                    pageX: x,
+                    pageY: y,
+                    radiusX: 2.5,
+                    radiusY: 2.5,
+                    rotationAngle: 10,
+                    force: 0.5
+                });
+                
+                const event = new TouchEvent(type, {
+                    cancelable: true,
+                    bubbles: true,
+                    touches: [touchObj],
+                    targetTouches: [touchObj],
+                    changedTouches: [touchObj]
+                });
+                
+                return event;
+            };
+            
             // 模拟人类拖动的时间和路径
-            const totalSteps = Math.max(5, Math.floor(distance / 10));  // 至少5步
+            const totalSteps = Math.max(10, Math.floor(distance / 5));  // 至少10步，更细腻的移动
             const stepDelay = config.sliderSpeed; // 每步延迟时间
             
-            // 开始拖动
+            // 开始拖动 - 同时触发鼠标和触摸事件
             slider.dispatchEvent(createMouseEvent('mousedown', startX, startY));
+            try { slider.dispatchEvent(createTouchEvent('touchstart', startX, startY)); } catch (e) {}
+            
+            // 触发dragstart事件
+            try { slider.dispatchEvent(new Event('dragstart', { bubbles: true })); } catch (e) {}
+            
             if (config.debug) console.log('[验证码] 触发鼠标按下事件');
             
             // 模拟人类拖动轨迹
             let currentDistance = 0;
             let step = 1;
+            
+            // 获取可能的滑动比例
+            let puzzleRatio = 0.8; // 默认比例
+            if (puzzlePiece && track) {
+                try {
+                    // 尝试计算实际比例
+                    const trackWidth = track.getBoundingClientRect().width;
+                    const containerWidth = result.container.getBoundingClientRect().width;
+                    if (trackWidth > 0 && containerWidth > 0) {
+                        puzzleRatio = containerWidth / trackWidth * 0.8;
+                        if (puzzleRatio < 0.3 || puzzleRatio > 1.5) puzzleRatio = 0.8; // 如果计算结果不合理，使用默认值
+                    }
+                } catch (e) {
+                    // 忽略错误
+                }
+            }
+            
+            if (config.debug && puzzlePiece) console.log('[验证码] 使用拼图移动比例:', puzzleRatio);
             
             const moveInterval = setInterval(() => {
                 if (step <= totalSteps) {
@@ -1649,11 +1868,50 @@
                     const randomOffset = (Math.random() - 0.5) * 2;
                     currentDistance = Math.floor(distance * progress);
                     
-                    // 移动鼠标
+                    // 移动鼠标 - 这里是关键，需要更新滑块的位置
                     const newX = startX + currentDistance;
                     const newY = startY + randomOffset;
                     
+                    // 触发mousemove和touchmove事件
                     slider.dispatchEvent(createMouseEvent('mousemove', newX, newY));
+                    try { slider.dispatchEvent(createTouchEvent('touchmove', newX, newY)); } catch (e) {}
+                    
+                    // 同时更新滑块的样式位置 - 这是修复的关键部分
+                    try {
+                        // 尝试通过style.left更新位置
+                        slider.style.left = currentDistance + 'px';
+                        
+                        // 尝试通过transform更新位置
+                        slider.style.transform = `translateX(${currentDistance}px)`;
+                        
+                        // 如果存在拼图元素，也更新它的位置
+                        if (puzzlePiece && puzzlePiece.style) {
+                            // 计算拼图元素的移动距离
+                            const puzzleDistance = currentDistance * puzzleRatio;
+                            
+                            // 更新拼图元素位置
+                            puzzlePiece.style.left = (puzzleInitialLeft + puzzleDistance) + 'px';
+                            puzzlePiece.style.transform = `translateX(${puzzleDistance}px)`;
+                            
+                            // 触发拼图元素的事件
+                            try {
+                                puzzlePiece.dispatchEvent(createMouseEvent('mousemove', newX, newY));
+                            } catch (e) {}
+                        }
+                        
+                        // 尝试更新父元素的样式（某些验证码依赖于此）
+                        const parent = slider.parentElement;
+                        if (parent && parent.style) {
+                            try {
+                                parent.setAttribute('data-position', currentDistance);
+                                if (parent.style.setProperty) {
+                                    parent.style.setProperty('--x', currentDistance + 'px');
+                                }
+                            } catch (e) {}
+                        }
+                    } catch (e) {
+                        // 忽略样式更新错误
+                    }
                     
                     if (config.debug && step % 5 === 0) {
                         console.log(`[验证码] 拖动进度: ${Math.round(progress * 100)}%`);
@@ -1667,10 +1925,36 @@
                     // 最后一步，确保到达目标位置
                     const finalX = startX + distance;
                     slider.dispatchEvent(createMouseEvent('mousemove', finalX, startY));
+                    try { slider.dispatchEvent(createTouchEvent('touchmove', finalX, startY)); } catch (e) {}
                     
-                    // 释放鼠标
+                    // 更新最终位置
+                    try {
+                        slider.style.left = distance + 'px';
+                        slider.style.transform = `translateX(${distance}px)`;
+                        
+                        // 更新拼图元素的最终位置
+                        if (puzzlePiece && puzzlePiece.style) {
+                            const puzzleDistance = distance * puzzleRatio;
+                            puzzlePiece.style.left = (puzzleInitialLeft + puzzleDistance) + 'px';
+                            puzzlePiece.style.transform = `translateX(${puzzleDistance}px)`;
+                        }
+                        
+                        // 更新父元素
+                        const parent = slider.parentElement;
+                        if (parent && parent.style) {
+                            parent.setAttribute('data-position', distance);
+                            if (parent.style.setProperty) {
+                                parent.style.setProperty('--x', distance + 'px');
+                            }
+                        }
+                    } catch (e) {
+                        // 忽略样式更新错误
+                    }
+                    
+                    // 释放鼠标和触摸
                     setTimeout(() => {
                         slider.dispatchEvent(createMouseEvent('mouseup', finalX, startY));
+                        try { slider.dispatchEvent(createTouchEvent('touchend', finalX, startY)); } catch (e) {}
                         
                         if (config.debug) console.log('[验证码] 滑块拖动完成');
                         
@@ -1679,6 +1963,33 @@
                             // 有些验证码需要触发额外事件
                             slider.dispatchEvent(new Event('dragend', { bubbles: true }));
                             slider.dispatchEvent(new Event('drop', { bubbles: true }));
+                            
+                            // 触发change事件
+                            const changeEvent = new Event('change', { bubbles: true });
+                            slider.dispatchEvent(changeEvent);
+                            
+                            // 尝试触发父元素的事件
+                            const parent = slider.parentElement;
+                            if (parent) {
+                                parent.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                            
+                            // 触发拼图元素的事件
+                            if (puzzlePiece) {
+                                puzzlePiece.dispatchEvent(createMouseEvent('mouseup', finalX, startY));
+                                puzzlePiece.dispatchEvent(new Event('dragend', { bubbles: true }));
+                            }
+                            
+                            // 触发自定义事件（某些验证码使用）
+                            document.dispatchEvent(new Event('sliderCompleted', { bubbles: true }));
+                            
+                            // 尝试触发验证完成事件
+                            const verifyEvent = new CustomEvent('verify', { 
+                                bubbles: true,
+                                detail: { success: true, distance: distance }
+                            });
+                            slider.dispatchEvent(verifyEvent);
+                            if (parent) parent.dispatchEvent(verifyEvent);
                         } catch (e) {
                             // 忽略错误
                         }
@@ -1687,6 +1998,706 @@
             }, stepDelay);
         } catch (e) {
             console.error('[验证码] 模拟滑块拖动时出错:', e);
+        }
+    }
+    
+    // 检查元素是否可能是图标点选验证码
+    function isPossibleIconCaptcha(element) {
+        if (!element || !element.tagName) return false;
+        
+        // 图标点选验证码常见类名和ID特征
+        const iconCaptchaClasses = [
+            'captcha', 'verify', 'vcode', 'icon', 'click', 'select', 'point', 
+            'geetest', 'yidun', 'verify-img', 'verify-box', 'shumei', 'sm-pop-inner',
+            'imgCaptcha', 'img-captcha', 'icon-select', 'icon-captcha', 'captcha-content',
+            'verify-image-panel', 'verify-img-panel'
+        ];
+        
+        // 检查类名和ID
+        const className = (element.className || '').toLowerCase();
+        const id = (element.id || '').toLowerCase();
+        
+        for (const cls of iconCaptchaClasses) {
+            if (className.includes(cls) || id.includes(cls)) return true;
+        }
+        
+        // 检查是否包含图片和提示文本
+        if (element.querySelector('img') && 
+            element.textContent && 
+            (element.textContent.includes('点击') || 
+             element.textContent.includes('选择') || 
+             element.textContent.includes('验证') ||
+             element.textContent.includes('标记'))) {
+            return true;
+        }
+        
+        // 检查是否有多个小图标
+        const smallImages = element.querySelectorAll('img[width="40"], img[width="50"], img[width="60"], img[height="40"], img[height="50"], img[height="60"]');
+        if (smallImages.length > 2) return true;
+        
+        // 检查是否有网格布局的图片
+        const gridContainers = element.querySelectorAll('.geetest_item, .yidun_item, [class*="item"], [class*="cell"], [class*="grid"]');
+        if (gridContainers.length >= 4) return true;
+        
+        // 检查是否有典型的提示文本
+        const text = element.textContent || '';
+        if (text.includes('请点击') || text.includes('请选择') || text.includes('点击图中') || 
+            text.includes('选择所有') || text.includes('请依次点击')) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    // 主函数：检查图标点选验证码
+    function checkForIconCaptcha(isForceCheck = false) {
+        if (isForceCheck) {
+            if (config.debug) {
+                console.log('[验证码] 强制检查图标点选验证码...');
+            }
+        }
+        
+        // 查找图标点选验证码
+        const result = findIconCaptcha();
+        
+        if (!result) {
+            if (config.debug && isForceCheck) console.log('[验证码] 未找到图标点选验证码');
+            return;
+        }
+        
+        const { container, image, promptText } = result;
+        
+        if (config.debug) {
+            console.log('[验证码] 找到图标点选验证码:');
+            console.log('- 容器:', container);
+            console.log('- 图片:', image);
+            console.log('- 提示文本:', promptText);
+        }
+        
+        // 检查是否已处理过该验证码
+        const captchaKey = image.src || container.outerHTML;
+        if (processedCaptchas.has(captchaKey) && !isForceCheck) {
+            if (config.debug) console.log('[验证码] 该图标点选验证码已被处理过，跳过');
+            return;
+        }
+        
+        // 记录该验证码已处理
+        processedCaptchas.add(captchaKey);
+        
+        // 获取验证码图片数据
+        getImageBase64(image)
+            .then(base64 => {
+                if (!base64) {
+                    console.error('[验证码] 获取图标点选验证码图片数据失败');
+                    return;
+                }
+                
+                // 发送到服务器识别
+                recognizeIconCaptcha(base64, promptText, container);
+            })
+            .catch(err => {
+                console.error('[验证码] 处理图标点选验证码图片时出错:', err);
+            });
+    }
+    
+    // 查找图标点选验证码
+    function findIconCaptcha() {
+        if (config.debug) console.log('[验证码] 开始查找图标点选验证码...');
+        
+        // 常见图标点选验证码容器选择器
+        const containerSelectors = [
+            '.captcha-container', '.verify-img-panel', '.geetest_panel', '.yidun_panel',
+            '.captcha-box', '.verify-box', '.captcha_modal', '.verify-img-wrap',
+            '.shumei_captcha', '.sm-pop-inner', '.imgCaptcha', '.img-captcha',
+            '.icon-select', '.icon-captcha', '.captcha-content', '.verify-image-panel',
+            '[class*="captcha"][class*="img"]', '[class*="verify"][class*="img"]',
+            '[class*="geetest"]', '[class*="yidun"]', '[class*="shumei"]',
+            '[class*="captcha"][class*="content"]', '[class*="verify"][class*="panel"]'
+        ];
+        
+        // 查找容器
+        let container = null;
+        for (const selector of containerSelectors) {
+            try {
+                const elements = document.querySelectorAll(selector);
+                for (const element of elements) {
+                    if (isVisible(element) && isPossibleIconCaptcha(element)) {
+                        container = element;
+                        if (config.debug) console.log('[验证码] 找到图标点选验证码容器:', selector, element);
+                        break;
+                    }
+                }
+                if (container) break;
+            } catch (e) {
+                // 忽略选择器错误
+            }
+        }
+        
+        // 如果没找到容器，尝试查找更广泛的元素
+        if (!container) {
+            const possibleContainers = document.querySelectorAll('[class*="captcha"], [class*="verify"], [class*="vcode"], [class*="geetest"], [class*="yidun"], [class*="shumei"], [class*="icon"], [class*="modal"]');
+            for (const element of possibleContainers) {
+                if (isVisible(element) && isPossibleIconCaptcha(element)) {
+                    container = element;
+                    if (config.debug) console.log('[验证码] 找到可能的图标点选验证码容器:', element);
+                    break;
+                }
+            }
+        }
+        
+        // 如果仍然没找到容器，尝试查找iframe中的验证码
+        if (!container) {
+            try {
+                const frames = document.querySelectorAll('iframe');
+                for (const frame of frames) {
+                    try {
+                        const frameDoc = frame.contentDocument || frame.contentWindow?.document;
+                        if (!frameDoc) continue;
+                        
+                        // 在iframe中查找容器
+                        for (const selector of containerSelectors) {
+                            const elements = frameDoc.querySelectorAll(selector);
+                            for (const element of elements) {
+                                if (isVisible(element) && isPossibleIconCaptcha(element)) {
+                                    container = element;
+                                    if (config.debug) console.log('[验证码] 在iframe中找到图标点选验证码容器:', selector, element);
+                                    break;
+                                }
+                            }
+                            if (container) break;
+                        }
+                    } catch (e) {
+                        // 可能有跨域问题，忽略错误
+                    }
+                    if (container) break;
+                }
+            } catch (e) {
+                console.error('[验证码] 检查iframe时出错:', e);
+            }
+        }
+        
+        // 如果没找到容器，直接返回null
+        if (!container) {
+            return null;
+        }
+        
+        // 在容器中查找图片
+        let image = null;
+        
+        // 首先尝试查找大图片（主验证码图片）
+        const largeImages = container.querySelectorAll('img');
+        for (const img of largeImages) {
+            if (isVisible(img) && img.offsetWidth >= 100 && img.offsetHeight >= 100) {
+                image = img;
+                if (config.debug) console.log('[验证码] 找到图标点选验证码图片:', img);
+                break;
+            }
+        }
+        
+        // 如果没找到大图片，可能是小图标网格类型的验证码
+        if (!image) {
+            // 查找可能的图片容器
+            const imageContainers = container.querySelectorAll('.geetest_item_wrap, .yidun_panel, [class*="panel"], [class*="img-area"], [class*="img-box"]');
+            for (const imgContainer of imageContainers) {
+                if (isVisible(imgContainer) && imgContainer.offsetWidth >= 200) {
+                    // 使用容器作为图片元素
+                    image = imgContainer;
+                    if (config.debug) console.log('[验证码] 使用图片容器作为目标:', imgContainer);
+                    break;
+                }
+            }
+        }
+        
+        // 如果仍然没找到图片，使用容器本身
+        if (!image) {
+            image = container;
+            if (config.debug) console.log('[验证码] 未找到明确的图片，使用容器作为目标');
+        }
+        
+        // 查找提示文本
+        let promptText = '';
+        
+        // 尝试查找明确的提示元素
+        const promptSelectors = [
+            '.captcha-title', '.verify-title', '.tip', '.hint', '.prompt', '.title',
+            '.geetest_tip', '.yidun_tips', '.shumei_tip', '.captcha-tips',
+            '[class*="title"]', '[class*="tip"]', '[class*="hint"]', '[class*="prompt"]',
+            '[class*="tips"]', '[class*="label"]', '[class*="text"]'
+        ];
+        
+        for (const selector of promptSelectors) {
+            try {
+                const elements = container.querySelectorAll(selector);
+                for (const element of elements) {
+                    if (element && element.textContent) {
+                        const text = element.textContent.trim();
+                        if (text.includes('点击') || text.includes('选择') || text.includes('验证') || text.includes('标记')) {
+                            promptText = text;
+                            if (config.debug) console.log('[验证码] 找到提示文本:', promptText);
+                            break;
+                        }
+                    }
+                }
+                if (promptText) break;
+            } catch (e) {
+                // 忽略选择器错误
+            }
+        }
+        
+        // 如果没找到明确的提示，尝试从容器文本中提取
+        if (!promptText) {
+            const text = container.textContent || '';
+            const promptRegex = /(请|点击|选择|请点击|请选择|点击图中|选择所有|标记|请标记|请依次点击)[^，。,.\n\t]+/;
+            const match = text.match(promptRegex);
+            if (match) {
+                promptText = match[0].trim();
+                if (config.debug) console.log('[验证码] 从文本中提取提示:', promptText);
+            }
+        }
+        
+        return { container, image, promptText };
+    }
+    
+    // 识别图标点选验证码
+    function recognizeIconCaptcha(imageBase64, promptText, container) {
+        if (config.debug) console.log('[验证码] 发送图标点选验证码到服务器识别...');
+        
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: ICON_SERVER,
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            data: JSON.stringify({ 
+                image: imageBase64,
+                prompt: promptText
+            }),
+            timeout: 10000, // 10秒超时
+            onload: function(response) {
+                try {
+                    if (config.debug) console.log('[验证码] 收到服务器响应:', response.responseText);
+                    
+                    const result = JSON.parse(response.responseText);
+                    
+                    if (result.code === 0 && result.data && result.data.positions && result.data.positions.length > 0) {
+                        const positions = result.data.positions;
+                        const target = result.data.target;
+                        
+                        if (config.debug) {
+                            console.log('[验证码] 识别成功:');
+                            console.log('- 目标类型:', target);
+                            console.log('- 识别到的位置:', positions);
+                        }
+                        
+                        // 点击识别到的位置
+                        clickIconPositions(container, positions);
+                    } else {
+                        if (config.debug) console.log('[验证码] 图标点选识别失败或未找到目标:', result.message || '未知错误');
+                    }
+                } catch (e) {
+                    if (config.debug) console.log('[验证码] 解析图标点选识别结果时出错:', e);
+                }
+            },
+            onerror: function(error) {
+                if (config.debug) console.log('[验证码] 图标点选识别请求失败:', error);
+            },
+            ontimeout: function() {
+                if (config.debug) console.log('[验证码] 图标点选识别请求超时');
+            }
+        });
+    }
+    
+    // 点击图标点选验证码的指定位置
+    function clickIconPositions(container, positions) {
+        if (!positions || positions.length === 0) return;
+        
+        if (config.debug) console.log('[验证码] 开始点击图标位置，共' + positions.length + '个点');
+        
+        // 获取容器位置
+        const containerRect = container.getBoundingClientRect();
+        
+        // 查找要点击的图片元素
+        let targetImage = null;
+        const images = container.querySelectorAll('img');
+        for (const img of images) {
+            if (isVisible(img) && img.offsetWidth >= 100 && img.offsetHeight >= 100) {
+                targetImage = img;
+                break;
+            }
+        }
+        
+        if (!targetImage) {
+            if (config.debug) console.log('[验证码] 未找到要点击的图片元素，尝试使用容器作为目标');
+            targetImage = container;
+        }
+        
+        // 获取图片位置
+        const imageRect = targetImage.getBoundingClientRect();
+        
+        if (config.debug) {
+            console.log('[验证码] 目标元素位置:', {
+                left: imageRect.left,
+                top: imageRect.top,
+                width: imageRect.width,
+                height: imageRect.height
+            });
+        }
+        
+        // 依次点击每个位置
+        let clickCount = 0;
+        
+        const processNextClick = (index) => {
+            if (index >= positions.length) {
+                if (config.debug) console.log('[验证码] 所有位置点击完成，尝试提交');
+                setTimeout(() => {
+                    trySubmitIconCaptcha(container);
+                }, config.iconClickDelay * 2);
+                return;
+            }
+            
+            try {
+                const [x, y] = positions[index];
+                
+                // 计算相对于图片的位置（考虑滚动）
+                const clickX = Math.round(imageRect.left + x + window.scrollX);
+                const clickY = Math.round(imageRect.top + y + window.scrollY);
+                const clientX = Math.round(imageRect.left + x);
+                const clientY = Math.round(imageRect.top + y);
+                
+                if (config.debug) console.log(`[验证码] 点击位置 ${index+1}/${positions.length}: (${x}, ${y}) -> 屏幕坐标(${clickX}, ${clickY}), 客户端坐标(${clientX}, ${clientY})`);
+                
+                // 方法1: 使用原生DOM事件
+                simulateRealMouseClick(targetImage, clientX, clientY);
+                
+                // 方法2: 查找点击位置的元素并直接点击
+                const elementAtPoint = document.elementFromPoint(clientX, clientY);
+                if (elementAtPoint) {
+                    if (config.debug) console.log('[验证码] 在点击位置找到元素:', elementAtPoint);
+                    setTimeout(() => {
+                        try {
+                            // 直接点击元素
+                            elementAtPoint.click();
+                            // 也触发模拟点击
+                            simulateRealMouseClick(elementAtPoint, clientX, clientY);
+                        } catch (e) {
+                            if (config.debug) console.log('[验证码] 直接点击元素失败:', e);
+                        }
+                    }, 50);
+                }
+                
+                // 方法3: 创建临时按钮并点击
+                setTimeout(() => {
+                    try {
+                        createAndClickTempButton(clickX, clickY);
+                    } catch (e) {
+                        if (config.debug) console.log('[验证码] 临时按钮点击失败:', e);
+                    }
+                    
+                    // 继续处理下一个点击
+                    clickCount++;
+                    if (config.debug) console.log(`[验证码] 完成点击 ${index+1}/${positions.length}`);
+                    
+                    setTimeout(() => {
+                        processNextClick(index + 1);
+                    }, config.iconClickDelay);
+                }, 100);
+                
+            } catch (e) {
+                console.error('[验证码] 点击图标位置时出错:', e);
+                // 继续处理下一个点击
+                setTimeout(() => {
+                    processNextClick(index + 1);
+                }, config.iconClickDelay);
+            }
+        };
+        
+        // 开始处理第一个点击
+        processNextClick(0);
+        
+        // 辅助函数: 模拟真实的鼠标点击
+        function simulateRealMouseClick(element, clientX, clientY) {
+            try {
+                // 1. 鼠标移动到元素上
+                const moveEvent = new MouseEvent('mousemove', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: clientX,
+                    clientY: clientY
+                });
+                element.dispatchEvent(moveEvent);
+                
+                // 2. 鼠标按下
+                const mousedownEvent = new MouseEvent('mousedown', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: clientX,
+                    clientY: clientY,
+                    button: 0,
+                    buttons: 1
+                });
+                element.dispatchEvent(mousedownEvent);
+                
+                // 3. 鼠标松开
+                const mouseupEvent = new MouseEvent('mouseup', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: clientX,
+                    clientY: clientY,
+                    button: 0,
+                    buttons: 0
+                });
+                element.dispatchEvent(mouseupEvent);
+                
+                // 4. 点击事件
+                const clickEvent = new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: clientX,
+                    clientY: clientY,
+                    button: 0,
+                    buttons: 0
+                });
+                element.dispatchEvent(clickEvent);
+                
+                // 5. 触摸事件
+                try {
+                    // 创建触摸对象
+                    const touch = new Touch({
+                        identifier: Date.now(),
+                        target: element,
+                        clientX: clientX,
+                        clientY: clientY,
+                        pageX: clientX + window.scrollX,
+                        pageY: clientY + window.scrollY,
+                        screenX: clientX + window.screenX,
+                        screenY: clientY + window.screenY,
+                        radiusX: 2.5,
+                        radiusY: 2.5,
+                        rotationAngle: 10,
+                        force: 0.5
+                    });
+                    
+                    // 触摸开始
+                    const touchStartEvent = new TouchEvent('touchstart', {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        touches: [touch],
+                        targetTouches: [touch],
+                        changedTouches: [touch]
+                    });
+                    element.dispatchEvent(touchStartEvent);
+                    
+                    // 触摸结束
+                    setTimeout(() => {
+                        const touchEndEvent = new TouchEvent('touchend', {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window,
+                            changedTouches: [touch]
+                        });
+                        element.dispatchEvent(touchEndEvent);
+                    }, 50);
+                } catch (e) {
+                    // 忽略触摸事件错误
+                }
+            } catch (e) {
+                if (config.debug) console.log('[验证码] 模拟鼠标点击失败:', e);
+            }
+        }
+        
+        // 辅助函数: 创建临时按钮并点击
+        function createAndClickTempButton(x, y) {
+            // 创建一个隐藏的按钮并放置在点击位置
+            const tempButton = document.createElement('button');
+            tempButton.style.position = 'absolute';
+            tempButton.style.left = (x - 5) + 'px';
+            tempButton.style.top = (y - 5) + 'px';
+            tempButton.style.width = '10px';
+            tempButton.style.height = '10px';
+            tempButton.style.opacity = '0';
+            tempButton.style.pointerEvents = 'auto';
+            tempButton.style.zIndex = '999999';
+            tempButton.style.cursor = 'pointer';
+            document.body.appendChild(tempButton);
+            
+            // 点击按钮
+            tempButton.click();
+            
+            // 移除临时按钮
+            setTimeout(() => {
+                document.body.removeChild(tempButton);
+            }, 100);
+        }
+    }
+    
+    // 尝试提交图标点选验证码
+    function trySubmitIconCaptcha(container) {
+        if (config.debug) console.log('[验证码] 尝试提交图标点选验证码...');
+        
+        // 查找可能的提交按钮
+        const submitButtonSelectors = [
+            '.captcha-submit', '.verify-btn', '.submit', '.confirm', '.btn-primary',
+            'button[type="submit"]', 'button.submit', 'button.confirm', 'button.verify',
+            '[class*="submit"]', '[class*="confirm"]', '[class*="verify"][class*="btn"]',
+            '.geetest_commit', '.yidun_button', '.shumei_commit', '.captcha_verify_btn',
+            '.captcha-verify-btn', '.verify-submit', '.btn-submit', '.btn-confirm',
+            '.captcha_footer [class*="btn"]', '.captcha-footer [class*="btn"]',
+            '.modal-footer [class*="btn"]', '.popup-footer [class*="btn"]',
+            'a[class*="btn"]', 'a[class*="button"]', 'div[class*="btn"]'
+        ];
+        
+        let submitButton = null;
+        
+        // 在容器中查找
+        for (const selector of submitButtonSelectors) {
+            try {
+                const elements = container.querySelectorAll(selector);
+                for (const element of elements) {
+                    if (element && isVisible(element) && 
+                       (isButton(element) || 
+                        element.textContent.includes('确定') || 
+                        element.textContent.includes('提交') || 
+                        element.textContent.includes('验证'))) {
+                        submitButton = element;
+                        if (config.debug) console.log('[验证码] 在容器中找到提交按钮:', element);
+                        break;
+                    }
+                }
+                if (submitButton) break;
+            } catch (e) {
+                // 忽略选择器错误
+            }
+        }
+        
+        // 如果在容器中没找到，在父元素中查找
+        if (!submitButton) {
+            const parent = container.parentElement;
+            if (parent) {
+                for (const selector of submitButtonSelectors) {
+                    try {
+                        const elements = parent.querySelectorAll(selector);
+                        for (const element of elements) {
+                            if (element && isVisible(element) && 
+                               (isButton(element) || 
+                                element.textContent.includes('确定') || 
+                                element.textContent.includes('提交') || 
+                                element.textContent.includes('验证'))) {
+                                submitButton = element;
+                                if (config.debug) console.log('[验证码] 在父容器中找到提交按钮:', element);
+                                break;
+                            }
+                        }
+                        if (submitButton) break;
+                    } catch (e) {
+                        // 忽略选择器错误
+                    }
+                }
+            }
+        }
+        
+        // 如果仍然没找到，在整个文档中查找
+        if (!submitButton) {
+            // 获取容器位置，用于计算距离
+            const containerRect = container.getBoundingClientRect();
+            const containerCenter = {
+                x: containerRect.left + containerRect.width / 2,
+                y: containerRect.top + containerRect.height / 2
+            };
+            
+            // 查找所有可能的按钮
+            const allButtons = document.querySelectorAll('button, input[type="button"], input[type="submit"], a.btn, a.button, [role="button"], [class*="btn"], [class*="button"]');
+            let closestButton = null;
+            let minDistance = Infinity;
+            
+            for (const button of allButtons) {
+                if (!isVisible(button)) continue;
+                
+                // 检查按钮文本是否包含关键词
+                const buttonText = button.textContent.toLowerCase();
+                if (buttonText.includes('确定') || buttonText.includes('提交') || 
+                    buttonText.includes('验证') || buttonText.includes('确认') || 
+                    buttonText.includes('下一步') || buttonText.includes('完成')) {
+                    
+                    // 计算按钮与容器的距离
+                    const buttonRect = button.getBoundingClientRect();
+                    const buttonCenter = {
+                        x: buttonRect.left + buttonRect.width / 2,
+                        y: buttonRect.top + buttonRect.height / 2
+                    };
+                    
+                    const distance = Math.sqrt(
+                        Math.pow(buttonCenter.x - containerCenter.x, 2) + 
+                        Math.pow(buttonCenter.y - containerCenter.y, 2)
+                    );
+                    
+                    // 更新最近的按钮
+                    if (distance < minDistance) {
+                        minDistance = distance;
+                        closestButton = button;
+                    }
+                }
+            }
+            
+            // 如果找到了最近的按钮，且距离在合理范围内
+            if (closestButton && minDistance < 500) {
+                submitButton = closestButton;
+                if (config.debug) console.log('[验证码] 在文档中找到最近的提交按钮:', submitButton, '距离:', minDistance);
+            }
+        }
+        
+        // 如果找到提交按钮，尝试多种方式点击它
+        if (submitButton) {
+            if (config.debug) console.log('[验证码] 找到提交按钮，点击提交:', submitButton);
+            
+            // 方法1: 直接点击
+            submitButton.click();
+            
+            // 方法2: 模拟鼠标点击
+            setTimeout(() => {
+                try {
+                    const rect = submitButton.getBoundingClientRect();
+                    const centerX = rect.left + rect.width / 2;
+                    const centerY = rect.top + rect.height / 2;
+                    
+                    // 创建并触发鼠标事件序列
+                    const events = ['mousedown', 'mouseup', 'click'];
+                    events.forEach(eventType => {
+                        const event = new MouseEvent(eventType, {
+                            view: window,
+                            bubbles: true,
+                            cancelable: true,
+                            clientX: centerX,
+                            clientY: centerY
+                        });
+                        submitButton.dispatchEvent(event);
+                    });
+                } catch (e) {
+                    if (config.debug) console.log('[验证码] 模拟点击提交按钮失败:', e);
+                }
+            }, 100);
+            
+            // 方法3: 触发表单提交
+            setTimeout(() => {
+                try {
+                    // 查找父表单并提交
+                    const form = submitButton.closest('form');
+                    if (form) {
+                        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+                        if (form.submit && typeof form.submit === 'function') {
+                            form.submit();
+                        }
+                    }
+                } catch (e) {
+                    // 忽略表单提交错误
+                }
+            }, 200);
+        } else {
+            if (config.debug) console.log('[验证码] 未找到提交按钮');
         }
     }
     
