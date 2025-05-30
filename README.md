@@ -1,12 +1,11 @@
 # 极简验证码识别工具
 
-一个简单易用的验证码识别工具，支持图形验证码、滑块验证码和图标点选验证码。
+一个简单易用的验证码识别工具，支持图形验证码和滑块验证码。
 
 ## 功能特点
 
 - 支持常见图形验证码自动识别
 - 支持滑块验证码自动拖动（包括拼图滑块）
-- 支持图标点选验证码自动点击
 - 轻量级设计，无需复杂配置
 - 支持自定义OCR服务器地址
 - 自动检测验证码和输入框
@@ -28,7 +27,79 @@
 
 [安装极简验证码识别工具](https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js)
 
-### 3. 启动OCR服务器
+### 3. 获取代码
+
+#### 克隆仓库
+
+```bash
+# 使用HTTPS克隆
+git clone https://github.com/laozig/captcha_.git
+
+# 使用SSH克隆
+git clone git@github.com:laozig/captcha_.git
+```
+
+#### 下载ZIP压缩包
+
+你也可以直接下载ZIP压缩包：
+
+```bash
+# 使用curl下载
+curl -L https://github.com/laozig/captcha_/archive/refs/heads/main.zip -o captcha_.zip
+
+# 使用wget下载
+wget https://github.com/laozig/captcha_/archive/refs/heads/main.zip -O captcha_.zip
+```
+
+或者直接访问 [下载链接](https://github.com/laozig/captcha_/archive/refs/heads/main.zip)
+
+### 4. 更新和贡献代码
+
+#### 更新本地代码
+
+如果你已经克隆了仓库，可以通过以下命令更新到最新版本：
+
+```bash
+# 进入项目目录
+cd captcha_
+
+# 获取远程更新
+git fetch origin
+
+# 合并最新代码
+git pull origin main
+```
+
+#### Fork和贡献代码
+
+如果你想贡献代码，可以按照以下步骤操作：
+
+1. 在GitHub上Fork本仓库
+2. 克隆你的Fork仓库到本地
+
+```bash
+git clone https://github.com/你的用户名/captcha_.git
+```
+
+3. 创建新的分支
+
+```bash
+git checkout -b feature/你的功能名称
+```
+
+4. 提交你的修改
+
+```bash
+git add .
+git commit -m "添加新功能：功能描述"
+git push origin feature/你的功能名称
+```
+
+5. 在GitHub上创建Pull Request
+
+访问你Fork的仓库页面，点击"Pull Request"按钮，创建一个新的Pull Request，描述你的修改内容。
+
+### 5. 启动OCR服务器
 
 #### Windows系统
 
@@ -59,13 +130,6 @@ chmod +x start_ocr_server.sh
 - 常规滑块验证码
 - 拼图滑块验证码（需要将拼图块拖入对应缺口）
 
-### 图标点选验证码
-
-自动识别图标点选类验证码，分析图片中的目标位置并模拟点击。支持以下类型：
-- 选择指定类型图标的验证码（如"请点击所有的汽车"）
-- 顺序点击的验证码（如"请依次点击1,2,3,4"）
-- 文字点选验证码（如"请点击下图中的'验证'字"）
-
 ## 配置选项
 
 在脚本中可以修改以下配置：
@@ -78,7 +142,6 @@ const config = {
     debug: true,  // 是否显示调试信息
     delay: 500,  // 点击验证码后的识别延迟(毫秒)
     sliderEnabled: true,  // 是否启用滑块验证码支持
-    iconEnabled: true,  // 是否启用图标点选验证码支持
     // 更多配置...
 };
 ```
@@ -105,18 +168,6 @@ Content-Type: application/json
 {
     "bg_image": "base64编码的背景图片",
     "slide_image": "base64编码的滑块图片"
-}
-```
-
-### 图标点选验证码识别
-
-```
-POST /icon
-Content-Type: application/json
-
-{
-    "image": "base64编码的图片数据",
-    "prompt": "提示文本，如'请点击所有的汽车'"
 }
 ```
 
