@@ -18,9 +18,41 @@
 (function() {
     'use strict';
     
-    // OCR服务器地址 - 修改为本地地址
-    const OCR_SERVER = 'http://captcha.tangyun.lat:9898/ocr';
-    const SLIDE_SERVER = 'http://captcha.tangyun.lat:9898/slide';
+    // 自动检测运行环境并选择合适的服务器地址
+    function detectEnvironment() {
+        // 检测当前主机名
+        const hostname = window.location.hostname;
+        const isLocalhost = hostname === 'localhost' || 
+                           hostname === '127.0.0.1' || 
+                           hostname.startsWith('192.168.') || 
+                           hostname.startsWith('10.') || 
+                           hostname === '';
+        
+        // 判断是否在本地环境
+        const isLocalEnvironment = isLocalhost || 
+                                  window.location.protocol === 'file:' || 
+                                  navigator.userAgent.includes('Electron');
+        
+        // 根据环境返回合适的服务器地址
+        if (isLocalEnvironment) {
+            return {
+                ocr: 'http://localhost:9898/ocr',
+                slide: 'http://localhost:9898/slide'
+            };
+        } else {
+            return {
+                ocr: 'http://captcha.tangyun.lat:9898/ocr',
+                slide: 'http://captcha.tangyun.lat:9898/slide'
+            };
+        }
+    }
+    
+    // 获取环境配置
+    const serverConfig = detectEnvironment();
+    
+    // OCR服务器地址 - 自动判断本地或远程
+    const OCR_SERVER = serverConfig.ocr;
+    const SLIDE_SERVER = serverConfig.slide;
     
     // 配置
     const config = {
@@ -51,25 +83,27 @@
     
     // 初始化
     function init() {
+        // 显示环境检测结果
+        if (config.debug) {
+            const isLocalEnvironment = OCR_SERVER.includes('localhost');
+            console.log('[验证码] 环境自动检测结果: ' + (isLocalEnvironment ? '本地环境' : '远程环境'));
+            console.log('[验证码] 使用服务器地址: ' + OCR_SERVER);
+            
+            // 测试服务器连接
+            testServerConnection();
+        }
+        
         // 等待页面加载完成
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', onDOMReady);
         } else {
             onDOMReady();
         }
-        
-        // 显示服务器连接信息
-        if (config.debug) {
-            console.log('[验证码] 服务器地址: ' + OCR_SERVER);
-            console.log('[验证码] 调试模式已开启');
-            
-            // 测试服务器连接
-            testServerConnection();
-        }
     }
     
     // 测试服务器连接
     function testServerConnection() {
+        const isLocalEnvironment = OCR_SERVER.includes('localhost');
         console.log('[验证码] 正在测试服务器连接...');
         
         GM_xmlhttpRequest({
@@ -80,16 +114,73 @@
                 try {
                     const result = JSON.parse(response.responseText);
                     console.log('[验证码] 服务器连接成功:', result);
+                    console.log('%c[验证码] 服务器状态: 在线', 'color: green; font-weight: bold;');
                 } catch (e) {
                     console.log('[验证码] 服务器响应解析错误:', e);
+                    console.log('%c[验证码] 服务器状态: 异常', 'color: orange; font-weight: bold;');
+                    
+                    // 如果是远程服务器异常，尝试切换到本地服务器
+                    if (!isLocalEnvironment) {
+                        console.log('[验证码] 尝试切换到备用地址');
+                        tryBackupServer();
+                    }
                 }
             },
             onerror: function(error) {
                 console.log('[验证码] 服务器连接失败:', error);
-                console.log('[验证码] 请确认服务器地址是否正确，并检查服务器是否已启动');
+                console.log('%c[验证码] 服务器状态: 离线', 'color: red; font-weight: bold;');
+                
+                // 如果是远程服务器离线，尝试切换到本地服务器
+                if (!isLocalEnvironment) {
+                    console.log('[验证码] 尝试切换到备用地址');
+                    tryBackupServer();
+                } else {
+                    console.log('[验证码] 请确认服务器地址是否正确，并检查服务器是否已启动');
+                }
             },
             ontimeout: function() {
-                console.log('[验证码] 服务器连接超时，请检查服务器是否已启动');
+                console.log('[验证码] 服务器连接超时');
+                console.log('%c[验证码] 服务器状态: 超时', 'color: red; font-weight: bold;');
+                
+                // 如果是远程服务器超时，尝试切换到本地服务器
+                if (!isLocalEnvironment) {
+                    console.log('[验证码] 尝试切换到备用地址');
+                    tryBackupServer();
+                } else {
+                    console.log('[验证码] 请检查服务器是否已启动');
+                }
+            }
+        });
+    }
+    
+    // 尝试切换到备用服务器
+    function tryBackupServer() {
+        const backupServer = 'http://localhost:9898/';
+        
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: backupServer,
+            timeout: 3000,
+            onload: function(response) {
+                try {
+                    JSON.parse(response.responseText);
+                    console.log('%c[验证码] 本地服务器可用，已切换', 'color: green; font-weight: bold;');
+                    // 切换服务器地址
+                    serverConfig.ocr = backupServer + 'ocr';
+                    serverConfig.slide = backupServer + 'slide';
+                    // 更新全局变量
+                    window.OCR_SERVER = serverConfig.ocr;
+                    window.SLIDE_SERVER = serverConfig.slide;
+                } catch (e) {
+                    console.log('[验证码] 本地服务器响应异常:', e);
+                }
+            },
+            onerror: function() {
+                console.log('[验证码] 本地服务器不可用');
+                console.log('[验证码] 请确保至少一个服务器正常运行');
+            },
+            ontimeout: function() {
+                console.log('[验证码] 本地服务器连接超时');
             }
         });
     }
@@ -379,43 +470,6 @@
         return element.textContent || element.value || element.innerText || '';
     }
     
-    // 监听验证码点击事件（用户手动刷新）
-    function listenForCaptchaClicks() {
-        document.addEventListener('click', event => {
-            // 检查是否点击了图片
-            if (event.target.tagName === 'IMG') {
-                const img = event.target;
-                
-                // 判断是否可能是验证码图片
-                if (isCaptchaImage(img)) {
-                    if (config.debug) console.log('[验证码] 检测到用户点击了验证码图片，等待新验证码加载...');
-                    
-                    // 延迟后识别新验证码
-                    setTimeout(() => {
-                        currentCaptchaImg = img;  // 设置为当前验证码
-                        checkForCaptcha(true);  // 强制识别
-                    }, config.delay);
-                }
-            }
-        });
-    }
-    
-    // 监听弹窗出现
-    function observePopups() {
-        // 特殊情况：iframe弹窗
-        try {
-            // 检查当前页面是否在iframe中
-            if (window.top !== window.self) {
-                // 如果是iframe，可能是验证码弹窗，自动检查验证码
-                setTimeout(() => {
-                    checkForCaptcha(true);
-                }, 1000);
-            }
-        } catch (e) {
-            // 可能有跨域问题，忽略错误
-        }
-    }
-    
     // 判断图片是否可能是验证码
     function isCaptchaImage(img) {
         // 验证码常见特征
@@ -425,11 +479,23 @@
         const className = (img.className || '').toLowerCase();
         const id = (img.id || '').toLowerCase();
         
-        // 检查所有属性是否包含验证码相关关键词
+        // 检查所有属性是否包含验证码相关关键词 - 这是最可靠的判断方式
         const captchaKeywords = ['captcha', 'verify', 'vcode', 'yzm', 'yanzheng', 'code', 'check', 
                                 'authcode', 'seccode', 'validate', 'verification', '验证码', '验证', '校验码'];
         
-        // 检查图片各种属性
+        // 排除关键词 - 避免误识别
+        const excludeKeywords = ['logo', 'icon', 'avatar', 'banner', 'header', 'footer', 'thumbnail', 
+                               'preview', 'profile', 'photo', 'image', 'picture', 'advert', 'ad'];
+        
+        // 检查排除关键词
+        for (const keyword of excludeKeywords) {
+            if (src.includes(keyword) || alt.includes(keyword) || title.includes(keyword) || 
+                className.includes(keyword) || id.includes(keyword)) {
+                return false;
+            }
+        }
+        
+        // 1. 通过属性名称强匹配 - 最高优先级判断
         for (const keyword of captchaKeywords) {
             if (src.includes(keyword) || alt.includes(keyword) || title.includes(keyword) || 
                 className.includes(keyword) || id.includes(keyword)) {
@@ -437,23 +503,197 @@
             }
         }
         
-        // 基于图片尺寸判断
-        if (img.complete && img.naturalWidth > 0) {
-            // 验证码图片通常较小，但不会太小
-            if (img.naturalWidth >= 20 && img.naturalWidth <= 200 &&
-                img.naturalHeight >= 20 && img.naturalHeight <= 100) {
+        // 2. 检查上下文环境 - 分析周围元素
+        try {
+            // 找到可能的父容器（向上最多查找3层）
+            let parent = img.parentElement;
+            let level = 0;
+            while (parent && level < 3) {
+                // 检查父容器属性
+                const parentText = (parent.textContent || '').toLowerCase();
+                const parentClass = (parent.className || '').toLowerCase();
+                const parentId = (parent.id || '').toLowerCase();
                 
-                // 排除明显不是验证码的图片
-                if (img.naturalWidth === img.naturalHeight) return false; // 正方形可能是图标
-                if (src.includes('logo') || src.includes('icon')) return false;
+                // 父容器包含验证码相关文字
+                if (captchaKeywords.some(keyword => parentClass.includes(keyword) || 
+                                                   parentId.includes(keyword) || 
+                                                   parentText.includes(keyword) || 
+                                                   parentText.includes('看不清'))) {
+                    return true;
+                }
+                
+                // 查找附近的输入框（通常验证码旁边有输入框）
+                const inputNearby = parent.querySelector('input[type="text"], input:not([type])');
+                if (inputNearby) {
+                    const inputAttr = [
+                        inputNearby.name || '',
+                        inputNearby.id || '',
+                        inputNearby.placeholder || '',
+                        inputNearby.className || ''
+                    ].join(' ').toLowerCase();
+                    
+                    // 输入框属性包含验证码关键词
+                    if (captchaKeywords.some(keyword => inputAttr.includes(keyword))) {
+                        return true;
+                    }
+                    
+                    // 检查输入框长度限制（验证码输入框通常有长度限制）
+                    if (inputNearby.maxLength > 0 && inputNearby.maxLength <= 8) {
+                        // 图片和输入框组合很可能是验证码
+                        return true;
+                    }
+                }
+                
+                // 查找刷新按钮或链接（验证码通常有刷新功能）
+                const refreshElement = parent.querySelector('a[href*="refresh"], a[onclick*="refresh"], button[onclick*="refresh"], div[onclick*="refresh"], img[onclick*="refresh"]');
+                if (refreshElement) {
+                    return true;
+                }
+                
+                parent = parent.parentElement;
+                level++;
+            }
+            
+            // 3. 查找周围的提示文本
+            const surroundingText = getSurroundingText(img, 100); // 获取周围100px范围内的文本
+            if (surroundingText) {
+                // 检查周围文本是否包含验证码相关提示
+                const promptTexts = ['验证码', '看不清', '换一张', '刷新', '点击刷新', 'captcha', 'verification code', 'security code', 'refresh'];
+                if (promptTexts.some(text => surroundingText.includes(text))) {
+                    return true;
+                }
+            }
+        } catch (e) {
+            // 忽略错误
+        }
+        
+        // 4. 特殊情况处理 - 某些常见的验证码样式
+        // 如果图片完成加载且有有效尺寸
+        if (img.complete && img.naturalWidth > 0) {
+            // 如果图片是动态生成的（包含随机数或时间戳）
+            if (src.includes('rand=') || src.includes('random=') || src.includes('timestamp=') || 
+                src.includes('time=') || src.includes('t=') || /\d{10,}/.test(src)) {
+                
+                // 排除明显不是验证码的情况
+                if (src.includes('logo') || src.includes('icon') || img.naturalWidth > 300 || img.naturalHeight > 150) {
+                    return false;
+                }
+                
+                return true;
+            }
+            
+            // 常见验证码尺寸和比例检查（作为次要判断）
+            if (img.naturalWidth >= 30 && img.naturalWidth <= 200 &&
+                img.naturalHeight >= 20 && img.naturalHeight <= 100) {
                 
                 // 验证码宽高比通常在1:1到5:1之间
                 const ratio = img.naturalWidth / img.naturalHeight;
-                if (ratio >= 1 && ratio <= 5) return true;
+                if (ratio >= 1 && ratio <= 5) {
+                    // 进一步检查图片位置和上下文
+                    const imgRect = img.getBoundingClientRect();
+                    
+                    // 验证码通常不在页面顶部或底部
+                    const windowHeight = window.innerHeight;
+                    if (imgRect.top < 50 || imgRect.bottom > windowHeight - 50) {
+                        return false;
+                    }
+                    
+                    // 检查是否在表单或登录区域内
+                    const isInForm = !!img.closest('form');
+                    const isInLoginArea = checkIfInLoginArea(img);
+                    
+                    if (isInForm || isInLoginArea) {
+                        return true;
+                    }
+                }
             }
         }
         
         return false;
+    }
+    
+    // 获取元素周围的文本内容
+    function getSurroundingText(element, distance) {
+        try {
+            const rect = element.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            
+            // 查找周围的文本节点
+            let surroundingText = '';
+            const textElements = document.querySelectorAll('div, span, label, p');
+            
+            for (const textEl of textElements) {
+                if (!isVisible(textEl)) continue;
+                
+                const textRect = textEl.getBoundingClientRect();
+                const textCenterX = textRect.left + textRect.width / 2;
+                const textCenterY = textRect.top + textRect.height / 2;
+                
+                // 计算距离
+                const distX = Math.abs(centerX - textCenterX);
+                const distY = Math.abs(centerY - textCenterY);
+                
+                // 如果在指定距离内
+                if (distX <= distance && distY <= distance) {
+                    surroundingText += ' ' + (textEl.textContent || '').toLowerCase();
+                }
+            }
+            
+            return surroundingText.trim();
+        } catch (e) {
+            return '';
+        }
+    }
+    
+    // 检查元素是否在登录区域
+    function checkIfInLoginArea(element) {
+        try {
+            // 向上查找可能的登录区域容器
+            let parent = element;
+            let level = 0;
+            
+            while (parent && level < 5) {
+                // 检查容器特征
+                const className = (parent.className || '').toLowerCase();
+                const id = (parent.id || '').toLowerCase();
+                const text = (parent.textContent || '').toLowerCase();
+                
+                // 登录区域关键词
+                const loginKeywords = ['login', 'signin', 'sign-in', 'logon', 'account', 
+                                    'user', 'auth', '登录', '登陆', '账号', '帐号', '用户'];
+                
+                // 检查是否包含登录关键词
+                if (loginKeywords.some(keyword => className.includes(keyword) || 
+                                                id.includes(keyword) || 
+                                                text.includes(keyword))) {
+                    return true;
+                }
+                
+                // 检查是否包含密码输入框（登录表单的特征）
+                if (parent.querySelector('input[type="password"]')) {
+                    return true;
+                }
+                
+                // 检查是否包含登录按钮
+                const buttons = parent.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, a.button');
+                for (const button of buttons) {
+                    const buttonText = (button.textContent || button.value || '').toLowerCase();
+                    if (buttonText.includes('登录') || buttonText.includes('登陆') || 
+                        buttonText.includes('sign in') || buttonText.includes('login') || 
+                        buttonText.includes('submit')) {
+                        return true;
+                    }
+                }
+                
+                parent = parent.parentElement;
+                level++;
+            }
+            
+            return false;
+        } catch (e) {
+            return false;
+        }
     }
     
     // 主函数：检查验证码
@@ -466,6 +706,7 @@
                     console.log('[验证码] 强制检查验证码...');
                 }
             }
+            // 只有在强制检查时才清除已处理记录
             processedCaptchas.clear();
         }
         
@@ -473,11 +714,17 @@
         const captchaImg = findCaptchaImage(isPopupCheck);
         
         // 如果没找到验证码图片，直接返回
-        if (!captchaImg) return;
+        if (!captchaImg) {
+            if (config.debug && isForceCheck) console.log('[验证码] 未找到验证码图片');
+            return;
+        }
         
         // 检查是否已经处理过该验证码
         const imageKey = captchaImg.src || captchaImg.id || captchaImg.className;
-        if (!isForceCheck && processedCaptchas.has(imageKey)) return;
+        if (!isForceCheck && processedCaptchas.has(imageKey)) {
+            if (config.debug) console.log('[验证码] 该验证码已被处理过，跳过');
+            return;
+        }
         
         if (config.debug) console.log('[验证码] 找到验证码图片:', captchaImg.src);
         
@@ -485,7 +732,10 @@
         const captchaInput = findCaptchaInput(captchaImg, isPopupCheck);
         
         // 如果没找到输入框，直接返回
-        if (!captchaInput) return;
+        if (!captchaInput) {
+            if (config.debug) console.log('[验证码] 未找到验证码输入框，跳过识别');
+            return;
+        }
         
         if (config.debug) console.log('[验证码] 找到验证码输入框:', captchaInput);
         
@@ -495,11 +745,6 @@
         
         // 标记为已处理
         processedCaptchas.add(imageKey);
-        
-        // 即使输入框已有值，也继续处理，会在填写前清空
-        if (captchaInput.value && captchaInput.value.trim() !== '') {
-            if (config.debug) console.log('[验证码] 输入框已有值，将清空并重新识别');
-        }
         
         // 获取验证码图片数据
         getImageBase64(captchaImg)
@@ -515,6 +760,115 @@
             .catch(err => {
                 console.error('[验证码] 处理图片时出错:', err);
             });
+    }
+    
+    // 识别验证码
+    function recognizeCaptcha(imageBase64, inputElement) {
+        if (config.debug) console.log('[验证码] 发送到OCR服务器识别...');
+        
+        // 先清除输入框的内容
+        if (inputElement.value) {
+            inputElement.value = '';
+            // 触发input事件
+            const clearEvent = new Event('input', { bubbles: true });
+            inputElement.dispatchEvent(clearEvent);
+            
+            if (config.debug) console.log('[验证码] 清除输入框原有内容');
+        }
+        
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: OCR_SERVER,
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            data: JSON.stringify({ image: imageBase64 }),
+            timeout: 10000, // 10秒超时
+            onload: function(response) {
+                try {
+                    if (config.debug) console.log('[验证码] 收到服务器响应:', response.responseText);
+                    
+                    const result = JSON.parse(response.responseText);
+                    
+                    if (result.code === 0 && result.data) {
+                        const captchaText = result.data.trim();
+                        
+                        if (captchaText) {
+                            if (config.debug) console.log('[验证码] 识别成功:', captchaText);
+                            
+                            // 填写验证码
+                            inputElement.value = captchaText;
+                            
+                            // 触发input事件
+                            const event = new Event('input', { bubbles: true });
+                            inputElement.dispatchEvent(event);
+                            
+                            // 触发change事件
+                            const changeEvent = new Event('change', { bubbles: true });
+                            inputElement.dispatchEvent(changeEvent);
+                            
+                            if (config.debug) console.log('%c[验证码] 已自动填写: ' + captchaText, 'color: green; font-weight: bold;');
+                            
+                            // 尝试查找并点击提交按钮
+                            tryFindAndClickSubmitButton(inputElement);
+                        } else {
+                            if (config.debug) console.log('[验证码] 识别结果为空');
+                        }
+                    } else {
+                        if (config.debug) console.log('[验证码] 识别失败:', result.message || '未知错误');
+                    }
+                } catch (e) {
+                    if (config.debug) console.log('[验证码] 解析OCR结果时出错:', e);
+                }
+                
+                // 清除当前处理的验证码
+                currentCaptchaImg = null;
+                currentCaptchaInput = null;
+            },
+            onerror: function(error) {
+                if (config.debug) console.log('[验证码] OCR请求失败:', error);
+                console.log('[验证码] 请检查服务器地址是否正确，以及服务器是否已启动');
+                
+                // 清除当前处理的验证码
+                currentCaptchaImg = null;
+                currentCaptchaInput = null;
+            },
+            ontimeout: function() {
+                if (config.debug) console.log('[验证码] OCR请求超时');
+                console.log('[验证码] 请检查服务器是否已启动，网络连接是否正常');
+                
+                // 清除当前处理的验证码
+                currentCaptchaImg = null;
+                currentCaptchaInput = null;
+            }
+        });
+    }
+    
+    // 监听验证码点击事件（用户手动刷新）
+    function listenForCaptchaClicks() {
+        document.addEventListener('click', event => {
+            // 检查是否点击了图片
+            if (event.target.tagName === 'IMG') {
+                const img = event.target;
+                
+                // 判断是否可能是验证码图片
+                if (isCaptchaImage(img)) {
+                    if (config.debug) console.log('[验证码] 检测到用户点击了验证码图片，等待新验证码加载...');
+                    
+                    // 从已处理集合中移除当前图片，确保可以重新识别
+                    const imageKey = img.src || img.id || img.className;
+                    processedCaptchas.delete(imageKey);
+                    
+                    // 延迟后识别新验证码
+                    setTimeout(() => {
+                        // 设置为当前验证码
+                        currentCaptchaImg = img;
+                        // 强制识别
+                        checkForCaptcha(true);
+                    }, config.delay);
+                }
+            }
+        });
     }
     
     // 查找验证码图片
@@ -978,78 +1332,6 @@
                 },
                 onerror: reject
             });
-        });
-    }
-    
-    // 识别验证码
-    function recognizeCaptcha(imageBase64, inputElement) {
-        if (config.debug) console.log('[验证码] 发送到OCR服务器识别...');
-        
-        GM_xmlhttpRequest({
-            method: 'POST',
-            url: OCR_SERVER,
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            data: JSON.stringify({ image: imageBase64 }),
-            timeout: 10000, // 10秒超时
-            onload: function(response) {
-                try {
-                    if (config.debug) console.log('[验证码] 收到服务器响应:', response.responseText);
-                    
-                    const result = JSON.parse(response.responseText);
-                    
-                    if (result.code === 0 && result.data) {
-                        const captchaText = result.data.trim();
-                        
-                        if (captchaText) {
-                            if (config.debug) console.log('[验证码] 识别成功:', captchaText);
-                            
-                            // 填写验证码
-                            inputElement.value = captchaText;
-                            
-                            // 触发input事件
-                            const event = new Event('input', { bubbles: true });
-                            inputElement.dispatchEvent(event);
-                            
-                            // 触发change事件
-                            const changeEvent = new Event('change', { bubbles: true });
-                            inputElement.dispatchEvent(changeEvent);
-                            
-                            if (config.debug) console.log('%c[验证码] 已自动填写: ' + captchaText, 'color: green; font-weight: bold;');
-                            
-                            // 尝试查找并点击提交按钮
-                            tryFindAndClickSubmitButton(inputElement);
-                        } else {
-                            if (config.debug) console.log('[验证码] 识别结果为空');
-                        }
-                    } else {
-                        if (config.debug) console.log('[验证码] 识别失败:', result.message || '未知错误');
-                    }
-                } catch (e) {
-                    if (config.debug) console.log('[验证码] 解析OCR结果时出错:', e);
-                }
-                
-                // 清除当前处理的验证码
-                currentCaptchaImg = null;
-                currentCaptchaInput = null;
-            },
-            onerror: function(error) {
-                if (config.debug) console.log('[验证码] OCR请求失败:', error);
-                console.log('[验证码] 请检查服务器地址是否正确，以及服务器是否已启动');
-                
-                // 清除当前处理的验证码
-                currentCaptchaImg = null;
-                currentCaptchaInput = null;
-            },
-            ontimeout: function() {
-                if (config.debug) console.log('[验证码] OCR请求超时');
-                console.log('[验证码] 请检查服务器是否已启动，网络连接是否正常');
-                
-                // 清除当前处理的验证码
-                currentCaptchaImg = null;
-                currentCaptchaInput = null;
-            }
         });
     }
     
